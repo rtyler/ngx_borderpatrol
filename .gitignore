@@ -1,0 +1,6 @@
+tmp
+.rvmrc
+Gemfile.lock
+logs
+build
+t/servroot

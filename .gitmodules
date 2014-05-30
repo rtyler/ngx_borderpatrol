@@ -1,0 +1,18 @@
+[submodule "contrib/nginx"]
+	path = contrib/nginx
+	url = https://github.com/nginx/nginx.git
+[submodule "contrib/ngx_devel_kit"]
+	path = contrib/ngx_devel_kit
+	url = https://github.com/simpl/ngx_devel_kit.git
+[submodule "contrib/lua-nginx-module"]
+	path = contrib/lua-nginx-module
+	url = https://github.com/chaoslawful/lua-nginx-module.git
+[submodule "contrib/memc-nginx-module"]
+	path = contrib/memc-nginx-module
+	url = https://github.com/agentzh/memc-nginx-module.git
+[submodule "contrib/echo-nginx-module"]
+	path = contrib/echo-nginx-module
+	url = https://github.com/agentzh/echo-nginx-module.git
+[submodule "contrib/headers-more-nginx-module"]
+	path = contrib/headers-more-nginx-module
+	url = https://github.com/agentzh/headers-more-nginx-module.git

@@ -1,0 +1,151 @@
+pid        /tmp/nginx.pid;
+daemon     off;
+
+http {
+  lua_package_path "../../build/usr/share/borderpatrol/?.lua;../../build/usr/share/lua/5.1/?.lua;;";
+  lua_package_cpath "../../build/usr/lib/lua/5.1/?.so;;";
+  limit_req_zone $binary_remote_addr zone=auth_zone:100m rate=100r/m;
+
+  error_log  logs/error.log debug;
+  access_log logs/access.log;
+
+  # used to store and retrieve keys from memcached
+  upstream session_store {
+    server localhost:11211;
+    keepalive 32;
+  }
+
+  # this is an app server protected by border patrol. If it returns a 401
+  # when an attempt is made to access a protected resource, borderpatrol redirects
+  # to the account service login
+  upstream b {
+    server localhost:9082;
+  }
+
+   # this is an app server protected by border patrol. If it returns a 401
+   # when an attempt is made to access a protected resource, borderpatrol redirects
+   # to the account service login
+   upstream c {
+     server localhost:9083;
+   }
+
+   # this is the account service. displays the login screen and also calls the auth service
+   # to get a master token and a service token
+   upstream account {
+    server localhost:9084;
+   }
+
+  # Nginx Lua has no SSL support for cosockets. This is unfortunate.
+  # This proxies all requests to use the native NGINX request, though
+  # it's a little hacky and sort of dirty.
+  upstream token_server {
+    server localhost:9081;
+  }
+
+  # Service mappings, map service urls to service names
+  init_by_lua 'service_mappings = {b="smb", c="flexd"}';
+
+  server {
+    listen  4443 default_server ssl;
+    root   html;
+
+    ssl_prefer_server_ciphers on;
+    ssl_protocols             SSLv3 TLSv1 TLSv1.1 TLSv1.2;
+    ssl_ciphers               ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-RC4-SHA:ECDHE-RSA-AES128-SHA:AES128-GCM-SHA256:RC4:HIGH:!MD5:!aNULL:!EDH;
+    ssl_session_cache         shared:SSL:16m;
+    ssl_session_timeout       10m;
+    ssl_certificate           ../ssl/server.crt;
+    ssl_certificate_key       ../ssl/server.key;
+
+    # GET    /session?id=foo -> memcache get
+    # POST   /session?id=foo -> memcache add, value is request body
+    # PUT    /session?id=foo -> memcache set, value is request body
+    location = /session {
+      internal;
+      set $memc_key $arg_id;
+      set $memc_exptime $arg_exptime;
+      memc_pass session_store;
+    }
+
+    # DELETE /session_delete?id=foo -> memcache delete
+    location = /session_delete {
+      internal;
+      set $memc_key $arg_id;
+      memc_pass session_store;
+    }
+
+    location = /auth {
+      internal;
+      content_by_lua_file '../../build/usr/share/borderpatrol/validate.lua';
+    }
+
+    location = /serviceauth {
+      internal;
+      content_by_lua_file '../../build/usr/share/borderpatrol/service_token.lua';
+    }
+
+    location = /authtoken {
+      internal;
+      rewrite ^/(.*) /api/auth/public/v1/account_token.json break;
+      proxy_pass http://token_server;
+      proxy_set_header   Host $host;
+    }
+
+    location = /mastertoken {
+      internal;
+      rewrite ^/(.*) /api/auth/service/v1/account_token.json break;
+      proxy_pass http://token_server;
+      proxy_set_header   Host $host;
+    }
+
+    location = / {
+      limit_req zone=auth_zone burst=25;
+      content_by_lua_file '../../build/usr/share/borderpatrol/authorize.lua';
+    }
+
+    location = /logout {
+      content_by_lua_file '../../build/usr/share/borderpatrol/logout.lua';
+    }
+
+    location ~ /(b|c)* {
+      set $original_uri $uri;
+      rewrite ^/(.*) / break;
+      set $auth_token $http_auth_token;
+      access_by_lua_file '../../build/usr/share/borderpatrol/access.lua';
+      proxy_set_header auth-token $auth_token;
+      proxy_pass http://$1;
+      proxy_intercept_errors on;
+      error_page 401  = @redirect;
+    }
+
+    location @redirect {
+      content_by_lua_file '../../build/usr/share/borderpatrol/redirect.lua';
+    }
+
+    location = /health {
+      content_by_lua_file '../../build/usr/share/borderpatrol/health_check.lua';
+    }
+
+    location /robots.txt {
+      alias ../../build/usr/share/borderpatrol/robots.txt;
+    }
+
+    location / {
+      set $auth_token $http_auth_token;
+      access_by_lua_file '../../build/usr/share/borderpatrol/access.lua';
+      proxy_set_header auth-token $auth_token;
+
+      # http://hostname/upstream_name/uri -> http://upstream_name/uri
+      rewrite ^/([^/]+)/?(.*)$ /$2 break;
+      proxy_pass         http://$1;
+      proxy_redirect     off;
+      proxy_set_header   Host $host;
+    }
+  }
+}
+
+events {
+  worker_connections  40;
+}
+
+# vim: ft=conf
